@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MeasureTool — Image Measurement</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@700;800&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0d0d14;
+    --surface:   #13131f;
+    --panel:     #16182a;
+    --border:    #252840;
+    --cyan:      #00e5ff;
+    --cyan-dim:  #00a8bb;
+    --green:     #6dffb3;
+    --green-dim: #2d6644;
+    --red:       #ff6b6b;
+    --red-dim:   #6b2020;
+    --amber:     #ffcc44;
+    --amber-dim: #5a3800;
+    --text:      #c8cce8;
+    --muted:     #50546a;
+    --font-mono: 'JetBrains Mono', monospace;
+    --font-head: 'Syne', sans-serif;
+  }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-mono);
+    overflow: hidden;
+  }
+
+  /* ── Layout ── */
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+
+  /* ── Toolbar ── */
+  #toolbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+
+  .sep {
+    width: 1px; height: 28px;
+    background: var(--border);
+    margin: 0 4px;
+    flex-shrink: 0;
+  }
+
+  .tb-label {
+    font-size: 11px;
+    color: var(--muted);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* Buttons */
+  .tb-btn {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 12px;
+    border: none; border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 700;
+    cursor: pointer;
+    transition: filter .15s, transform .1s;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .tb-btn:hover  { filter: brightness(1.25); }
+  .tb-btn:active { transform: scale(.97); }
+  .tb-btn.active { outline: 2px solid var(--cyan); outline-offset: 1px; }
+
+  .btn-paste   { background: #0f2a50; color: #c0e0ff; }
+  .btn-dist    { background: var(--green-dim); color: var(--green); }
+  .btn-dist.active { background: #1a4d30; }
+  .btn-size    { background: var(--red-dim);   color: var(--red);   }
+  .btn-size.active { background: #5a1515; }
+  .btn-reset   { background: var(--amber-dim); color: var(--amber);
+                 font-size: 10px; padding: 5px 10px; }
+
+  /* Inputs */
+  .tb-input {
+    background: #090912;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--cyan);
+    font-family: var(--font-mono);
+    font-size: 12px; font-weight: 600;
+    padding: 5px 8px;
+    width: 88px;
+    flex-shrink: 0;
+    transition: border-color .2s;
+    outline: none;
+  }
+  .tb-input:focus { border-color: var(--cyan-dim); }
+  .tb-input.disp  {
+    color: var(--cyan-dim);
+    background: #07070f;
+    cursor: default;
+    pointer-events: none;
+  }
+  .tb-input::placeholder { color: var(--muted); }
+
+  /* ── Canvas area ── */
+  #canvas-wrap {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    background: var(--bg);
+  }
+
+  #canvas {
+    display: block;
+    width: 100%; height: 100%;
+    cursor: crosshair;
+  }
+
+  /* Zoom-reset pill — floats top-right of canvas */
+  #btn-reset-zoom {
+    position: absolute;
+    top: 12px; right: 14px;
+    display: none;
+    z-index: 10;
+  }
+
+  /* Drop overlay */
+  #drop-overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 16px;
+    pointer-events: none;
+    transition: opacity .3s;
+  }
+  #drop-overlay.hidden { opacity: 0; }
+
+  .drop-icon {
+    font-size: 56px;
+    opacity: .18;
+    animation: float 3s ease-in-out infinite;
+  }
+  @keyframes float {
+    0%,100% { transform: translateY(0); }
+    50%      { transform: translateY(-10px); }
+  }
+  .drop-title {
+    font-family: var(--font-head);
+    font-size: 22px; font-weight: 800;
+    color: var(--text);
+    opacity: .22;
+    letter-spacing: .5px;
+  }
+  .drop-sub {
+    font-size: 11px; color: var(--muted);
+    opacity: .7;
+  }
+
+  /* Drag-over highlight */
+  #canvas-wrap.dragover { outline: 2px dashed var(--cyan); }
+
+  /* ── Status bar ── */
+  #statusbar {
+    display: flex; align-items: center;
+    justify-content: space-between;
+    padding: 4px 14px;
+    background: #0a0a10;
+    border-top: 1px solid var(--border);
+    font-size: 10px; color: var(--muted);
+    flex-shrink: 0;
+  }
+  #status-left  { color: #4a9aaa; }
+  #status-right { color: var(--muted); }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ── TOOLBAR ── -->
+  <div id="toolbar">
+
+    <!-- Paste -->
+    <button class="tb-btn btn-paste" id="btn-paste" title="Ctrl+V also works">
+      📋 Paste from Clipboard
+    </button>
+
+    <div class="sep"></div>
+
+    <!-- Distance input -->
+    <span class="tb-label">Distance:</span>
+    <input class="tb-input" id="inp-dist" type="text" inputmode="decimal"
+           placeholder="e.g. 50" title="Real-world length in mm">
+    <span class="tb-label">mm</span>
+
+    <!-- Distance button -->
+    <button class="tb-btn btn-dist" id="btn-dist">📏 Distance</button>
+
+    <div class="sep"></div>
+
+    <!-- Compute Size -->
+    <button class="tb-btn btn-size" id="btn-size">📐 Compute Size</button>
+
+    <!-- W -->
+    <span class="tb-label">W:</span>
+    <input class="tb-input disp" id="out-w" type="text" readonly placeholder="—">
+    <span class="tb-label">mm</span>
+
+    <!-- H -->
+    <span class="tb-label">H:</span>
+    <input class="tb-input disp" id="out-h" type="text" readonly placeholder="—">
+    <span class="tb-label">mm</span>
+
+    <!-- Diagonal -->
+    <span class="tb-label">⌀:</span>
+    <input class="tb-input disp" id="out-diag" type="text" readonly placeholder="—">
+    <span class="tb-label">inch</span>
+
+  </div>
+
+  <!-- ── CANVAS ── -->
+  <div id="canvas-wrap" tabindex="0">
+    <canvas id="canvas"></canvas>
+
+    <!-- Zoom reset pill (shows when zoomed) -->
+    <button class="tb-btn btn-reset" id="btn-reset-zoom">⊙ Reset Zoom</button>
+
+    <!-- Empty-state overlay -->
+    <div id="drop-overlay">
+      <div class="drop-icon">📐</div>
+      <div class="drop-title">MeasureTool</div>
+      <div class="drop-sub">Paste an image (Ctrl+V) or drag &amp; drop a file</div>
+    </div>
+  </div>
+
+  <!-- ── STATUS ── -->
+  <div id="statusbar">
+    <span id="status-left">Ready — paste an image to begin.</span>
+    <span id="status-right">Scroll=zoom · Right-drag=pan</span>
+  </div>
+
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────
+const MM_PER_INCH = 25.4;
+const ZOOM_STEP  = 1.15;
+const ZOOM_MIN   = 0.02;
+const ZOOM_MAX   = 60;
+
+// ─────────────────────────────────────────────────────────
+// DOM refs
+// ─────────────────────────────────────────────────────────
+const canvas      = document.getElementById('canvas');
+const ctx         = canvas.getContext('2d');
+const wrap        = document.getElementById('canvas-wrap');
+const overlay     = document.getElementById('drop-overlay');
+const btnPaste    = document.getElementById('btn-paste');
+const btnDist     = document.getElementById('btn-dist');
+const btnSize     = document.getElementById('btn-size');
+const btnReset    = document.getElementById('btn-reset-zoom');
+const inpDist     = document.getElementById('inp-dist');
+const outW        = document.getElementById('out-w');
+const outH        = document.getElementById('out-h');
+const outDiag     = document.getElementById('out-diag');
+const statusLeft  = document.getElementById('status-left');
+
+// ─────────────────────────────────────────────────────────
+// State
+// ─────────────────────────────────────────────────────────
+let img       = null;    // HTMLImageElement
+let zoom      = 1;
+let panX      = 0, panY = 0;
+let fitZoom   = 1;       // zoom level at "fit" state
+
+let scaleImgPx = null;   // calibration line length in image-pixels
+let scaleRealMm = null;  // real-world mm
+
+let mode      = null;    // 'dist' | 'bbox'
+let dragStart = null;    // {x, y} in canvas coords
+let dragEnd   = null;
+
+// Stored overlay drawings (in image-pixel coords)
+let calCoords  = null;   // {x1,y1,x2,y2}
+let bboxCoords = null;   // {x1,y1,x2,y2}
+
+// ─────────────────────────────────────────────────────────
+// Canvas sizing
+// ─────────────────────────────────────────────────────────
+function resizeCanvas() {
+  canvas.width  = wrap.clientWidth;
+  canvas.height = wrap.clientHeight;
+  redraw();
+}
+window.addEventListener('resize', resizeCanvas);
+
+// ─────────────────────────────────────────────────────────
+// Coord helpers
+// ─────────────────────────────────────────────────────────
+function canvasToImg(cx, cy) {
+  return { x: (cx - panX) / zoom, y: (cy - panY) / zoom };
+}
+function imgToCanvas(ix, iy) {
+  return { x: ix * zoom + panX, y: iy * zoom + panY };
+}
+
+// ─────────────────────────────────────────────────────────
+// Fit image to canvas
+// ─────────────────────────────────────────────────────────
+function fitImage() {
+  const cw = canvas.width, ch = canvas.height;
+  zoom  = Math.min(cw / img.width, ch / img.height, 1);
+  panX  = (cw - img.width  * zoom) / 2;
+  panY  = (ch - img.height * zoom) / 2;
+  fitZoom = zoom;
+  updateResetBtn();
+}
+
+// ─────────────────────────────────────────────────────────
+// Load image from various sources
+// ─────────────────────────────────────────────────────────
+function loadImage(src) {
+  const image = new Image();
+  image.onload = () => {
+    img = image;
+    overlay.classList.add('hidden');
+    scaleImgPx = null; scaleRealMm = null;
+    calCoords = null; bboxCoords = null;
+    clearResults();
+    fitImage();
+    redraw();
+    setStatus(`Image loaded: ${img.width}×${img.height} px — enter mm then 📏 Distance to calibrate.`);
+  };
+  image.src = src;
+}
+
+function loadBlob(blob) {
+  const url = URL.createObjectURL(blob);
+  loadImage(url);
+}
+
+// ─────────────────────────────────────────────────────────
+// Paste from clipboard
+// ─────────────────────────────────────────────────────────
+async function pasteFromClipboard() {
+  try {
+    const items = await navigator.clipboard.read();
+    for (const item of items) {
+      const type = item.types.find(t => t.startsWith('image/'));
+      if (type) {
+        const blob = await item.getType(type);
+        loadBlob(blob);
+        return;
+      }
+    }
+    alert('No image found in clipboard.\nCopy an image first (e.g. screenshot).');
+  } catch {
+    alert('Clipboard access denied.\nUse Ctrl+V or drag & drop an image file.');
+  }
+}
+
+document.addEventListener('paste', e => {
+  const item = [...e.clipboardData.items].find(i => i.type.startsWith('image/'));
+  if (item) loadBlob(item.getAsFile());
+});
+
+btnPaste.addEventListener('click', pasteFromClipboard);
+
+// ─────────────────────────────────────────────────────────
+// Drag & Drop file
+// ─────────────────────────────────────────────────────────
+wrap.addEventListener('dragover', e => { e.preventDefault(); wrap.classList.add('dragover'); });
+wrap.addEventListener('dragleave', () => wrap.classList.remove('dragover'));
+wrap.addEventListener('drop', e => {
+  e.preventDefault();
+  wrap.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file && file.type.startsWith('image/')) loadBlob(file);
+});
+
+// ─────────────────────────────────────────────────────────
+// Results UI
+// ─────────────────────────────────────────────────────────
+function setResults(wMm, hMm) {
+  outW.value    = wMm    != null ? wMm.toFixed(2)                           : '';
+  outH.value    = hMm    != null ? hMm.toFixed(2)                           : '';
+  outDiag.value = (wMm != null && hMm != null)
+    ? (Math.hypot(wMm, hMm) / MM_PER_INCH).toFixed(3) : '';
+  outW.placeholder    = wMm    != null ? '' : '—';
+  outH.placeholder    = hMm    != null ? '' : '—';
+  outDiag.placeholder = (wMm != null && hMm != null) ? '' : '—';
+}
+function clearResults() { setResults(null, null); }
+
+// ─────────────────────────────────────────────────────────
+// Status
+// ─────────────────────────────────────────────────────────
+function setStatus(msg) { statusLeft.textContent = msg; }
+
+// ─────────────────────────────────────────────────────────
+// Zoom reset button
+// ─────────────────────────────────────────────────────────
+function updateResetBtn() {
+  btnReset.style.display = (img && Math.abs(zoom - fitZoom) > 0.001) ? 'block' : 'none';
+}
+
+btnReset.addEventListener('click', () => {
+  fitImage();
+  redraw();
+  setStatus('Zoom reset to fit.');
+});
+
+// ─────────────────────────────────────────────────────────
+// Zoom (scroll)
+// ─────────────────────────────────────────────────────────
+wrap.addEventListener('wheel', e => {
+  if (!img) return;
+  e.preventDefault();
+  const direction = e.deltaY < 0 ? 1 : -1;
+  const factor    = direction > 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
+  const newZoom   = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoom * factor));
+  if (newZoom === zoom) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const cx   = e.clientX - rect.left;
+  const cy   = e.clientY - rect.top;
+  panX = cx - (cx - panX) * (newZoom / zoom);
+  panY = cy - (cy - panY) * (newZoom / zoom);
+  zoom = newZoom;
+
+  redraw();
+  updateResetBtn();
+  setStatus(`Zoom: ${(zoom * 100).toFixed(0)}%`);
+}, { passive: false });
+
+// ─────────────────────────────────────────────────────────
+// Pan (right-click drag)
+// ─────────────────────────────────────────────────────────
+let panDrag = null;
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+canvas.addEventListener('mousedown', e => {
+  if (e.button === 2 || e.button === 1) {
+    panDrag = { sx: e.clientX, sy: e.clientY, px: panX, py: panY };
+  }
+});
+window.addEventListener('mousemove', e => {
+  if (!panDrag) return;
+  panX = panDrag.px + (e.clientX - panDrag.sx);
+  panY = panDrag.py + (e.clientY - panDrag.sy);
+  redraw();
+  updateResetBtn();
+});
+window.addEventListener('mouseup', e => {
+  if (e.button === 2 || e.button === 1) panDrag = null;
+});
+
+// ─────────────────────────────────────────────────────────
+// Mode buttons
+// ─────────────────────────────────────────────────────────
+function setMode(m) {
+  mode = m;
+  btnDist.classList.toggle('active', m === 'dist');
+  btnSize.classList.toggle('active', m === 'bbox');
+  canvas.style.cursor = m ? 'crosshair' : 'default';
+}
+
+btnDist.addEventListener('click', () => {
+  if (!img) { alert('Paste an image first.'); return; }
+  const val = parseFloat(inpDist.value);
+  if (!val || val <= 0) { alert('Enter a valid real-world distance (mm).'); return; }
+  scaleRealMm = val;
+  setMode('dist');
+  setStatus(`Mode: Distance — drag a line = ${scaleRealMm} mm`);
+});
+
+btnSize.addEventListener('click', () => {
+  if (!img) { alert('Paste an image first.'); return; }
+  if (!scaleImgPx) { alert('Draw a Distance calibration line first.'); return; }
+  clearResults();
+  setMode('bbox');
+  setStatus('Mode: Compute Size — drag a rectangle, W/H/⌀ update live.');
+});
+
+// Only allow numeric input
+inpDist.addEventListener('input', () => {
+  inpDist.value = inpDist.value.replace(/[^0-9.]/g, '');
+});
+
+// ─────────────────────────────────────────────────────────
+// Measurement drag (left-click)
+// ─────────────────────────────────────────────────────────
+canvas.addEventListener('mousedown', e => {
+  if (e.button !== 0 || !mode || !img) return;
+  const rect = canvas.getBoundingClientRect();
+  dragStart = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  dragEnd   = { ...dragStart };
+});
+
+window.addEventListener('mousemove', e => {
+  if (!dragStart || !mode) return;
+  const rect = canvas.getBoundingClientRect();
+  dragEnd = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  redraw();
+
+  if (mode === 'bbox' && scaleImgPx) {
+    const { wMm, hMm } = computeBbox(dragStart, dragEnd);
+    setResults(wMm, hMm);
+  }
+});
+
+window.addEventListener('mouseup', e => {
+  if (e.button !== 0 || !dragStart || !mode) return;
+  const rect = canvas.getBoundingClientRect();
+  const end  = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+
+  if (mode === 'dist') {
+    const p1 = canvasToImg(dragStart.x, dragStart.y);
+    const p2 = canvasToImg(end.x, end.y);
+    const len = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+    if (len < 3) { setStatus('Line too short — try again.'); dragStart = null; return; }
+    scaleImgPx = len;
+    calCoords  = { x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y };
+    const ratio = scaleRealMm / scaleImgPx;
+    setStatus(`Calibration done: ${scaleImgPx.toFixed(1)} img-px = ${scaleRealMm} mm (${ratio.toFixed(4)} mm/px) — now 📐 Compute Size.`);
+    setMode(null);
+  } else if (mode === 'bbox') {
+    const { wMm, hMm, p1, p2 } = computeBbox(dragStart, end);
+    if (Math.abs(end.x - dragStart.x) < 3 || Math.abs(end.y - dragStart.y) < 3) {
+      setStatus('Box too small — try again.'); dragStart = null; return;
+    }
+    bboxCoords = { x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y };
+    setResults(wMm, hMm);
+    const diag = (Math.hypot(wMm, hMm) / MM_PER_INCH).toFixed(3);
+    setStatus(`Result: W=${wMm.toFixed(2)} mm  H=${hMm.toFixed(2)} mm  ⌀=${diag}"`);
+    setMode(null);
+  }
+
+  dragStart = null;
+  dragEnd   = null;
+  redraw();
+});
+
+function computeBbox(start, end) {
+  const p1 = canvasToImg(start.x, start.y);
+  const p2 = canvasToImg(end.x,   end.y);
+  const ratio = scaleRealMm / scaleImgPx;
+  const wMm   = Math.abs(p2.x - p1.x) * ratio;
+  const hMm   = Math.abs(p2.y - p1.y) * ratio;
+  return { wMm, hMm, p1, p2 };
+}
+
+// ─────────────────────────────────────────────────────────
+// Draw
+// ─────────────────────────────────────────────────────────
+function redraw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!img) return;
+
+  // Image
+  ctx.save();
+  ctx.translate(panX, panY);
+  ctx.scale(zoom, zoom);
+  ctx.drawImage(img, 0, 0);
+  ctx.restore();
+
+  // Calibration line (stored)
+  if (calCoords) drawCalLine(calCoords);
+
+  // Bbox (stored)
+  if (bboxCoords) drawBbox(bboxCoords, true);
+
+  // Active drag
+  if (dragStart && dragEnd && mode) {
+    if (mode === 'dist') drawActiveLine(dragStart, dragEnd);
+    if (mode === 'bbox') drawActiveBbox(dragStart, dragEnd);
+  }
+}
+
+function drawCalLine(c) {
+  const a = imgToCanvas(c.x1, c.y1);
+  const b = imgToCanvas(c.x2, c.y2);
+  ctx.save();
+  ctx.strokeStyle = '#00e5ff';
+  ctx.lineWidth   = 2;
+  ctx.setLineDash([6, 4]);
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+  ctx.stroke();
+  // endpoints
+  for (const p of [a, b]) {
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#00e5ff';
+    ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.fill();
+  }
+  // label
+  const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2 - 14;
+  drawLabel(ctx, `↔ ${scaleRealMm} mm`, mx, my, '#00e5ff', '#001a20');
+  ctx.restore();
+}
+
+function drawActiveLine(s, e) {
+  ctx.save();
+  ctx.strokeStyle = '#00e5ff';
+  ctx.lineWidth   = 2;
+  ctx.setLineDash([6, 4]);
+  ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(e.x, e.y); ctx.stroke();
+  ctx.restore();
+}
+
+function drawBbox(c, final) {
+  const a = imgToCanvas(c.x1, c.y1);
+  const b = imgToCanvas(c.x2, c.y2);
+  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+  const w = Math.abs(b.x - a.x), h = Math.abs(b.y - a.y);
+  ctx.save();
+  ctx.strokeStyle = '#ff6b6b';
+  ctx.lineWidth   = 2;
+  ctx.setLineDash(final ? [] : [6, 4]);
+  ctx.strokeRect(x, y, w, h);
+  ctx.fillStyle = 'rgba(255,107,107,0.07)';
+  ctx.fillRect(x, y, w, h);
+  ctx.restore();
+  if (final && scaleImgPx) {
+    const ratio = scaleRealMm / scaleImgPx;
+    const wMm   = Math.abs(c.x2 - c.x1) * ratio;
+    const hMm   = Math.abs(c.y2 - c.y1) * ratio;
+    const diag  = (Math.hypot(wMm, hMm) / MM_PER_INCH).toFixed(3);
+    const cx    = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+    drawLabel(ctx, `W:${wMm.toFixed(1)}mm  H:${hMm.toFixed(1)}mm\n⌀${diag}"`, cx, cy, '#ffcc44', '#1a1000');
+  }
+}
+
+function drawActiveBbox(s, e) {
+  drawBbox({
+    x1: canvasToImg(s.x, s.y).x, y1: canvasToImg(s.x, s.y).y,
+    x2: canvasToImg(e.x, e.y).x, y2: canvasToImg(e.x, e.y).y
+  }, false);
+  if (scaleImgPx) {
+    const { wMm, hMm } = computeBbox(s, e);
+    const diag = (Math.hypot(wMm, hMm) / MM_PER_INCH).toFixed(3);
+    const cx   = (s.x + e.x) / 2, cy = (s.y + e.y) / 2;
+    drawLabel(ctx, `W:${wMm.toFixed(1)}mm  H:${hMm.toFixed(1)}mm\n⌀${diag}"`, cx, cy, '#ffcc44', '#1a1000');
+  }
+}
+
+function drawLabel(ctx, text, x, y, color, bg) {
+  const lines    = text.split('\n');
+  const fontSize = 12;
+  ctx.save();
+  ctx.font = `700 ${fontSize}px 'JetBrains Mono', monospace`;
+  const maxW = Math.max(...lines.map(l => ctx.measureText(l).width));
+  const padX = 8, padY = 5, lineH = fontSize + 3;
+  const bh   = lines.length * lineH + padY * 2 - 3;
+  const bx   = x - maxW / 2 - padX;
+  const by   = y - bh / 2;
+  // background
+  ctx.fillStyle   = bg || '#001010';
+  ctx.globalAlpha = 0.85;
+  roundRect(ctx, bx, by, maxW + padX * 2, bh, 4);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  // text
+  ctx.fillStyle   = color;
+  ctx.textAlign   = 'center';
+  ctx.textBaseline= 'top';
+  lines.forEach((l, i) => ctx.fillText(l, x, by + padY + i * lineH));
+  ctx.restore();
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y); ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r); ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h); ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r); ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath();
+}
+
+// ─────────────────────────────────────────────────────────
+// Init
+// ─────────────────────────────────────────────────────────
+resizeCanvas();
+</script>
+</body>
+</html>
