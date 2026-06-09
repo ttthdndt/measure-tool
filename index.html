@@ -230,6 +230,10 @@
     <input class="tb-input disp" id="out-diag" type="text" readonly placeholder="—">
     <span class="tb-label">inch</span>
 
+    <!-- Ratio -->
+    <span class="tb-label">Ratio:</span>
+    <input class="tb-input disp" id="out-ratio" type="text" readonly placeholder="—" title="short ÷ long, rounded to 1 decimal place">
+
   </div>
 
   <!-- ── CANVAS ── -->
@@ -279,6 +283,7 @@ const inpDist     = document.getElementById('inp-dist');
 const outW        = document.getElementById('out-w');
 const outH        = document.getElementById('out-h');
 const outDiag     = document.getElementById('out-diag');
+const outRatio    = document.getElementById('out-ratio');
 const statusLeft  = document.getElementById('status-left');
 
 // ─────────────────────────────────────────────────────────
@@ -402,9 +407,17 @@ function setResults(wMm, hMm) {
   outH.value    = hMm    != null ? hMm.toFixed(2)                           : '';
   outDiag.value = (wMm != null && hMm != null)
     ? (Math.hypot(wMm, hMm) / MM_PER_INCH).toFixed(3) : '';
-  outW.placeholder    = wMm    != null ? '' : '—';
-  outH.placeholder    = hMm    != null ? '' : '—';
-  outDiag.placeholder = (wMm != null && hMm != null) ? '' : '—';
+  if (wMm != null && hMm != null && wMm > 0 && hMm > 0) {
+    const shorter = Math.min(wMm, hMm);
+    const longer  = Math.max(wMm, hMm);
+    outRatio.value = (shorter / longer).toFixed(1);
+  } else {
+    outRatio.value = '';
+  }
+  outW.placeholder     = wMm    != null ? '' : '—';
+  outH.placeholder     = hMm    != null ? '' : '—';
+  outDiag.placeholder  = (wMm != null && hMm != null) ? '' : '—';
+  outRatio.placeholder = (wMm != null && hMm != null) ? '' : '—';
 }
 function clearResults() { setResults(null, null); }
 
