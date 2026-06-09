@@ -495,7 +495,7 @@ function setResults(wMm, hMm) {
   if (wMm != null && hMm != null && wMm > 0 && hMm > 0) {
     const shorter = Math.min(wMm, hMm);
     const longer  = Math.max(wMm, hMm);
-    outRatio.value = (shorter / longer).toFixed(2);
+    outRatio.value = (shorter / longer).toFixed(1);
   } else {
     outRatio.value = '';
   }
@@ -658,11 +658,16 @@ window.addEventListener('mouseup', e => {
     setStatus(`Calibration done: ${scaleImgPx.toFixed(1)} img-px = ${scaleRealMm} mm (${ratio.toFixed(4)} mm/px) — now 📐 Compute Size.`);
     setMode(null);
   } else if (mode === 'bbox') {
-    const { wMm, hMm, p1, p2 } = computeBbox(dragStart, end);
+    const { wMm, hMm } = computeBbox(dragStart, end);
     if (Math.abs(end.x - dragStart.x) < 3 || Math.abs(end.y - dragStart.y) < 3) {
       setStatus('Box too small — try again.'); dragStart = null; return;
     }
-    bboxCoords = { x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y };
+    // Store anchor corners in IMAGE coords so bbox survives zoom/pan changes
+    const p1 = canvasToImg(dragStart.x, dragStart.y);
+    const p2 = canvasToImg(end.x, dragStart.y);
+    const p3 = canvasToImg(end.x, end.y);
+    const p4 = canvasToImg(dragStart.x, end.y);
+    bboxCoords = { p1, p2, p3, p4, wMm, hMm };
     setResults(wMm, hMm);
     const diag = (Math.hypot(wMm, hMm) / MM_PER_INCH).toFixed(3);
     setStatus(`Result: W=${wMm.toFixed(2)} mm  H=${hMm.toFixed(2)} mm  ⌀=${diag}"`);
@@ -742,39 +747,64 @@ function drawActiveLine(s, e) {
   ctx.restore();
 }
 
+function computeBbox(start, end) {
+  // The 4 canvas-space corners of the axis-aligned rectangle
+  const corners = [
+    canvasToImg(start.x, start.y),
+    canvasToImg(end.x,   start.y),
+    canvasToImg(end.x,   end.y),
+    canvasToImg(start.x, end.y),
+  ];
+  // Width = distance between top-left and top-right corners in image space
+  // Height = distance between top-left and bottom-left corners in image space
+  const wImg = Math.hypot(corners[1].x - corners[0].x, corners[1].y - corners[0].y);
+  const hImg = Math.hypot(corners[3].x - corners[0].x, corners[3].y - corners[0].y);
+  const ratio = scaleRealMm / scaleImgPx;
+  return { wMm: wImg * ratio, hMm: hImg * ratio };
+}
+
+// bboxCoords stores 4 image-coord corners + cached wMm/hMm
 function drawBbox(c, final) {
-  const a = imgToCanvas(c.x1, c.y1);
-  const b = imgToCanvas(c.x2, c.y2);
-  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
-  const w = Math.abs(b.x - a.x), h = Math.abs(b.y - a.y);
+  // Project image coords → canvas coords
+  const pts = [c.p1, c.p2, c.p3, c.p4].map(p => imgToCanvas(p.x, p.y));
   ctx.save();
   ctx.strokeStyle = '#ff6b6b';
   ctx.lineWidth   = 2;
   ctx.setLineDash(final ? [] : [6, 4]);
-  ctx.strokeRect(x, y, w, h);
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.closePath();
+  ctx.stroke();
   ctx.fillStyle = 'rgba(255,107,107,0.07)';
-  ctx.fillRect(x, y, w, h);
+  ctx.fill();
   ctx.restore();
-  if (final && scaleImgPx) {
-    const ratio = scaleRealMm / scaleImgPx;
-    const wMm   = Math.abs(c.x2 - c.x1) * ratio;
-    const hMm   = Math.abs(c.y2 - c.y1) * ratio;
-    const diag  = (Math.hypot(wMm, hMm) / MM_PER_INCH).toFixed(3);
-    const cx    = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
-    drawLabel(ctx, `W:${wMm.toFixed(1)}mm  H:${hMm.toFixed(1)}mm\n⌀${diag}"`, cx, cy, '#ffcc44', '#1a1000');
+  if (final) {
+    const cx = pts.reduce((s, p) => s + p.x, 0) / 4;
+    const cy = pts.reduce((s, p) => s + p.y, 0) / 4;
+    const diag = (Math.hypot(c.wMm, c.hMm) / MM_PER_INCH).toFixed(3);
+    drawLabel(ctx, `W:${c.wMm.toFixed(1)}mm  H:${c.hMm.toFixed(1)}mm\n⌀${diag}"`,
+              cx, cy, '#ffcc44', '#1a1000');
   }
 }
 
 function drawActiveBbox(s, e) {
-  drawBbox({
-    x1: canvasToImg(s.x, s.y).x, y1: canvasToImg(s.x, s.y).y,
-    x2: canvasToImg(e.x, e.y).x, y2: canvasToImg(e.x, e.y).y
-  }, false);
+  // Draw screen-aligned rect directly in canvas coords
+  const x = Math.min(s.x, e.x), y = Math.min(s.y, e.y);
+  const w = Math.abs(e.x - s.x),  h = Math.abs(e.y - s.y);
+  ctx.save();
+  ctx.strokeStyle = '#ff6b6b';
+  ctx.lineWidth   = 2;
+  ctx.setLineDash([6, 4]);
+  ctx.strokeRect(x, y, w, h);
+  ctx.fillStyle = 'rgba(255,107,107,0.07)';
+  ctx.fillRect(x, y, w, h);
+  ctx.restore();
   if (scaleImgPx) {
     const { wMm, hMm } = computeBbox(s, e);
     const diag = (Math.hypot(wMm, hMm) / MM_PER_INCH).toFixed(3);
-    const cx   = (s.x + e.x) / 2, cy = (s.y + e.y) / 2;
-    drawLabel(ctx, `W:${wMm.toFixed(1)}mm  H:${hMm.toFixed(1)}mm\n⌀${diag}"`, cx, cy, '#ffcc44', '#1a1000');
+    drawLabel(ctx, `W:${wMm.toFixed(1)}mm  H:${hMm.toFixed(1)}mm\n⌀${diag}"`,
+              (s.x + e.x) / 2, (s.y + e.y) / 2, '#ffcc44', '#1a1000');
   }
 }
 
