@@ -91,6 +91,10 @@
   .btn-dist.active { background: #1a4d30; }
   .btn-size    { background: var(--red-dim);   color: var(--red);   }
   .btn-size.active { background: #5a1515; }
+  .btn-rotate  {
+    background: #1a1a3a; color: #a0a8e0;
+    font-size: 16px; padding: 4px 10px;
+  }
   .btn-reset   { background: var(--amber-dim); color: var(--amber);
                  font-size: 10px; padding: 5px 10px; }
 
@@ -138,6 +142,34 @@
     display: none;
     z-index: 10;
   }
+
+  /* Free-rotate handle */
+  #rotate-handle {
+    position: absolute;
+    top: 50px; right: 14px;
+    display: none;           /* shown via JS when image loaded */
+    z-index: 10;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    background: #1a1230;
+    border: 1px solid #3a2a6a;
+    border-radius: 6px;
+    color: #b090ff;
+    font-family: var(--font-mono);
+    font-size: 10px; font-weight: 700;
+    cursor: grab;
+    user-select: none;
+    transition: background .15s, border-color .15s;
+  }
+  #rotate-handle:hover   { background: #231840; border-color: #7050c0; }
+  #rotate-handle.dragging {
+    cursor: grabbing;
+    background: #2d1f55;
+    border-color: #9060e0;
+    color: #c8a8ff;
+  }
+  #rotate-deg { min-width: 34px; text-align: right; }
 
   /* Drop overlay */
   #drop-overlay {
@@ -243,6 +275,16 @@
     <!-- Zoom reset pill (shows when zoomed) -->
     <button class="tb-btn btn-reset" id="btn-reset-zoom">⊙ Reset Zoom</button>
 
+    <!-- Free-rotate handle (always visible when image loaded) -->
+    <div id="rotate-handle" title="Hold and drag to rotate freely">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21.5 2v6h-6"/>
+        <path d="M21.34 15.57a10 10 0 1 1-.57-8.38"/>
+      </svg>
+      <span id="rotate-deg">0°</span>
+    </div>
+
     <!-- Empty-state overlay -->
     <div id="drop-overlay">
       <div class="drop-icon">📐</div>
@@ -254,7 +296,7 @@
   <!-- ── STATUS ── -->
   <div id="statusbar">
     <span id="status-left">Ready — paste an image to begin.</span>
-    <span id="status-right">Scroll=zoom · Right-drag=pan</span>
+    <span id="status-right">Scroll=zoom · Right-drag=pan · ↻ handle=free rotate</span>
   </div>
 
 </div>
@@ -279,6 +321,8 @@ const btnPaste    = document.getElementById('btn-paste');
 const btnDist     = document.getElementById('btn-dist');
 const btnSize     = document.getElementById('btn-size');
 const btnReset    = document.getElementById('btn-reset-zoom');
+const rotHandle   = document.getElementById('rotate-handle');
+const rotDegLbl   = document.getElementById('rotate-deg');
 const inpDist     = document.getElementById('inp-dist');
 const outW        = document.getElementById('out-w');
 const outH        = document.getElementById('out-h');
@@ -293,6 +337,7 @@ let img       = null;    // HTMLImageElement
 let zoom      = 1;
 let panX      = 0, panY = 0;
 let fitZoom   = 1;       // zoom level at "fit" state
+let rotRad    = 0;       // visual rotation in RADIANS (free, display-only)
 
 let scaleImgPx = null;   // calibration line length in image-pixels
 let scaleRealMm = null;  // real-world mm
@@ -316,23 +361,44 @@ function resizeCanvas() {
 window.addEventListener('resize', resizeCanvas);
 
 // ─────────────────────────────────────────────────────────
-// Coord helpers
+// Coord helpers — free rotation
+// We treat the image as drawn centred at (panX, panY) (image centre in canvas)
+// and rotated by rotRad around that centre.
 // ─────────────────────────────────────────────────────────
+
+// Canvas coords → original image-pixel coords
 function canvasToImg(cx, cy) {
-  return { x: (cx - panX) / zoom, y: (cy - panY) / zoom };
+  // translate so image centre is origin
+  const dx = cx - panX;
+  const dy = cy - panY;
+  // un-rotate
+  const cos = Math.cos(-rotRad), sin = Math.sin(-rotRad);
+  const rx  = dx * cos - dy * sin;
+  const ry  = dx * sin + dy * cos;
+  // shift from image-centre origin to image top-left origin
+  return { x: rx + img.width / 2, y: ry + img.height / 2 };
 }
+
+// Original image-pixel coords → canvas coords
 function imgToCanvas(ix, iy) {
-  return { x: ix * zoom + panX, y: iy * zoom + panY };
+  const dx  = ix - img.width  / 2;
+  const dy  = iy - img.height / 2;
+  const cos = Math.cos(rotRad), sin = Math.sin(rotRad);
+  return {
+    x: dx * cos - dy * sin + panX,
+    y: dx * sin + dy * cos + panY,
+  };
 }
 
 // ─────────────────────────────────────────────────────────
 // Fit image to canvas
+// panX/panY = canvas position of the IMAGE CENTRE
 // ─────────────────────────────────────────────────────────
 function fitImage() {
   const cw = canvas.width, ch = canvas.height;
   zoom  = Math.min(cw / img.width, ch / img.height, 1);
-  panX  = (cw - img.width  * zoom) / 2;
-  panY  = (ch - img.height * zoom) / 2;
+  panX  = cw / 2;
+  panY  = ch / 2;
   fitZoom = zoom;
   updateResetBtn();
 }
@@ -347,6 +413,9 @@ function loadImage(src) {
     overlay.classList.add('hidden');
     scaleImgPx = null; scaleRealMm = null;
     calCoords = null; bboxCoords = null;
+    rotRad = 0;
+    rotDegLbl.textContent = '0°';
+    rotHandle.style.display = 'flex';
     clearResults();
     fitImage();
     redraw();
@@ -386,6 +455,22 @@ document.addEventListener('paste', e => {
 });
 
 btnPaste.addEventListener('click', pasteFromClipboard);
+
+// ─────────────────────────────────────────────────────────
+// Free-rotate handle — drag to spin image around its centre
+// ─────────────────────────────────────────────────────────
+let rotDrag = null;  // { startAngle, startRad }
+
+rotHandle.addEventListener('mousedown', e => {
+  if (!img) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const rect = canvas.getBoundingClientRect();
+  const startAngle = Math.atan2(e.clientY - rect.top - panY, e.clientX - rect.left - panX);
+  rotDrag = { startAngle, startRad: rotRad };
+  rotHandle.classList.add('dragging');
+  canvas.style.cursor = 'grabbing';
+});
 
 // ─────────────────────────────────────────────────────────
 // Drag & Drop file
@@ -430,7 +515,10 @@ function setStatus(msg) { statusLeft.textContent = msg; }
 // Zoom reset button
 // ─────────────────────────────────────────────────────────
 function updateResetBtn() {
-  btnReset.style.display = (img && Math.abs(zoom - fitZoom) > 0.001) ? 'block' : 'none';
+  const cw = canvas.width, ch = canvas.height;
+  const centred = Math.abs(panX - cw / 2) < 2 && Math.abs(panY - ch / 2) < 2;
+  const atFit   = Math.abs(zoom - fitZoom) < 0.001;
+  btnReset.style.display = (img && (!atFit || !centred)) ? 'block' : 'none';
 }
 
 btnReset.addEventListener('click', () => {
@@ -453,8 +541,9 @@ wrap.addEventListener('wheel', e => {
   const rect = canvas.getBoundingClientRect();
   const cx   = e.clientX - rect.left;
   const cy   = e.clientY - rect.top;
-  panX = cx - (cx - panX) * (newZoom / zoom);
-  panY = cy - (cy - panY) * (newZoom / zoom);
+  // panX/panY is image centre; scale distance from cursor to centre
+  panX = cx + (panX - cx) * (newZoom / zoom);
+  panY = cy + (panY - cy) * (newZoom / zoom);
   zoom = newZoom;
 
   redraw();
@@ -473,6 +562,15 @@ canvas.addEventListener('mousedown', e => {
   }
 });
 window.addEventListener('mousemove', e => {
+  if (rotDrag) {
+    const rect  = canvas.getBoundingClientRect();
+    const angle = Math.atan2(e.clientY - rect.top - panY, e.clientX - rect.left - panX);
+    rotRad = rotDrag.startRad + (angle - rotDrag.startAngle);
+    const deg = ((rotRad * 180 / Math.PI) % 360 + 360) % 360;
+    rotDegLbl.textContent = deg.toFixed(1) + '°';
+    redraw();
+    return;
+  }
   if (!panDrag) return;
   panX = panDrag.px + (e.clientX - panDrag.sx);
   panY = panDrag.py + (e.clientY - panDrag.sy);
@@ -480,6 +578,13 @@ window.addEventListener('mousemove', e => {
   updateResetBtn();
 });
 window.addEventListener('mouseup', e => {
+  if (rotDrag) {
+    rotDrag = null;
+    rotHandle.classList.remove('dragging');
+    canvas.style.cursor = mode ? 'crosshair' : 'default';
+    const deg = ((rotRad * 180 / Math.PI) % 360 + 360) % 360;
+    setStatus(`Rotated ${deg.toFixed(1)}° — measurements stay in original image coords.`);
+  }
   if (e.button === 2 || e.button === 1) panDrag = null;
 });
 
@@ -585,11 +690,12 @@ function redraw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   if (!img) return;
 
-  // Image
+  // Image — centred at (panX, panY), scaled by zoom, rotated by rotRad
   ctx.save();
   ctx.translate(panX, panY);
+  ctx.rotate(rotRad);
   ctx.scale(zoom, zoom);
-  ctx.drawImage(img, 0, 0);
+  ctx.drawImage(img, -img.width / 2, -img.height / 2);
   ctx.restore();
 
   // Calibration line (stored)
