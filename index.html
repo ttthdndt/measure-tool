@@ -495,7 +495,7 @@ function setResults(wMm, hMm) {
   if (wMm != null && hMm != null && wMm > 0 && hMm > 0) {
     const shorter = Math.min(wMm, hMm);
     const longer  = Math.max(wMm, hMm);
-    outRatio.value = (shorter / longer).toFixed(1);
+    outRatio.value = (shorter / longer).toFixed(2);
   } else {
     outRatio.value = '';
   }
